@@ -1,0 +1,72 @@
+name: build-lunatv
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 下载 LunaTV 源码
+        run: |
+          curl -sL -o src.tar.gz https://codeload.github.com/MoonTechLab/LunaTV/tar.gz/refs/heads/main
+          mkdir -p src
+          tar -xzf src.tar.gz -C src --strip-components=1
+          echo "文件数: $(find src -type f | wc -l)"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装依赖
+        working-directory: src
+        env:
+          HUSKY: 0
+          NEXT_TELEMETRY_DISABLED: 1
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 构建
+        working-directory: src
+        env:
+          HUSKY: 0
+          NEXT_TELEMETRY_DISABLED: 1
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: pnpm build
+
+      - name: 打包 standalone
+        run: |
+          cd src
+          cp -r public .next/standalone/ 2>/dev/null || true
+          mkdir -p .next/standalone/.next
+          cp -r .next/static .next/standalone/.next/static
+          cd .next/standalone
+          tar -czf "$GITHUB_WORKSPACE/lunatv-standalone.tar.gz" .
+          cd "$GITHUB_WORKSPACE"
+          ls -lh lunatv-standalone.tar.gz
+          du -sh src/.next/standalone
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunatv-standalone
+          path: lunatv-standalone.tar.gz
+          retention-days: 7
+
+      - name: 发布到 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest lunatv-standalone.tar.gz \
+            --title "LunaTV standalone (auto)" \
+            --notes "commit $GITHUB_SHA"
